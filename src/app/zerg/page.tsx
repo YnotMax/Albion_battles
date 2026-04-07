@@ -160,17 +160,21 @@ export default function ZergHQPage() {
           {advice && (
             <div style={{
               margin: '0 24px 24px 24px', padding: 20,
-              background: `linear-gradient(90deg, rgba(15,23,42,0.8), ${advice.c}10)`,
-              borderLeft: `4px solid ${advice.c}`,
-              borderRadius: 6
+              background: `var(--bg-card, rgba(255, 255, 255, 0.7))`,
+              borderLeft: `5px solid ${advice.c}`,
+              borderRight: `1px solid rgba(203,213,225,0.2)`,
+              borderTop: `1px solid rgba(203,213,225,0.2)`,
+              borderBottom: `1px solid rgba(203,213,225,0.2)`,
+              borderRadius: 6,
+              boxShadow: 'inset 0 2px 4px 0 rgba(255, 255, 255, 0.3)'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                <span className="material-symbols-outlined" style={{ color: advice.c, fontSize: 18 }}>{advice.i}</span>
+                <span className="material-symbols-outlined" style={{ color: advice.c, fontSize: 20 }}>{advice.i}</span>
                 <span style={{ fontWeight: 800, fontSize: 12, letterSpacing: '0.05em', color: advice.c, textTransform: 'uppercase' }}>
                   Inteligência Tática de Banco de Dados
                 </span>
               </div>
-              <div style={{ color: 'var(--text-400)', fontSize: 13, lineHeight: 1.6 }}>
+              <div style={{ color: 'var(--text-900)', fontSize: 13, lineHeight: 1.6, fontWeight: 500 }}>
                 {advice.t}
               </div>
             </div>
