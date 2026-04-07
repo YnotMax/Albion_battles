@@ -3,8 +3,8 @@ import './globals.css'
 import { SidebarNav, BottomNav } from '@/components/Navigation'
 
 export const metadata: Metadata = {
-  title: 'IMORTAIS | Guild Admin Hub',
-  description: 'Painel administrativo de batalhas ZvZ, presença e estatísticas da guilda IMORTAIS no Albion Online.',
+  title: 'I M O R T A I S | Guild Admin Hub',
+  description: 'Painel administrativo de batalhas ZvZ, presença e estatísticas da guilda I M O R T A I S no Albion Online.',
   viewport: 'width=device-width, initial-scale=1',
 }
 
@@ -42,7 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: '0.22em', color: 'var(--text-900)', lineHeight: 1 }}>
-                  IMORTAIS
+                  I M O R T A I S
                 </div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.18em', color: 'var(--cyan)', marginTop: 2 }}>
                   GUILD ADMIN HUB
