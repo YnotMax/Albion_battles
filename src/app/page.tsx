@@ -10,31 +10,66 @@ const sb = createClient(
 )
 
 // ── Data ──────────────────────────────────────────────────────────────────────
-async function getBattles(): Promise<Battle[]> {
-  const { data } = await sb.from('battles').select('*').order('start_time', { ascending: false }).limit(25)
+async function getBattles(start?: string, end?: string): Promise<Battle[]> {
+  let q = sb.from('battles').select('*').order('start_time', { ascending: false }).limit(25)
+  
+  if (start) q = q.gte('start_time', start)
+  if (end) {
+    const ed = new Date(end)
+    ed.setHours(23, 59, 59, 999)
+    q = q.lte('start_time', ed.toISOString())
+  }
+  
+  const { data } = await q
   return data ?? []
 }
 
 type AggPlayer = {
-  name: string; role: string
+  name: string; roles: string[]
   damage: number; healing: number
   kills: number; deaths: number; battles: number
 }
 
-async function getPlayerAgg(): Promise<AggPlayer[]> {
-  const { data } = await sb.from('player_stats')
-    .select('player_name, role, damage_done, healing_done, kills, deaths')
+async function getPlayerAgg(start?: string, end?: string): Promise<AggPlayer[]> {
+  let q = sb.from('player_stats')
+    .select('player_name, role, damage_done, healing_done, kills, deaths, battles!inner(start_time)')
+    
+  if (start) q = q.gte('battles.start_time', start)
+  if (end) {
+    const ed = new Date(end)
+    ed.setHours(23, 59, 59, 999)
+    q = q.lte('battles.start_time', ed.toISOString())
+  }
+
+  const { data } = await q
   if (!data) return []
-  const map: Record<string, AggPlayer> = {}
+  
+  const map: Record<string, {
+    name: string; roleCounts: Record<string, number>;
+    damage: number; healing: number; kills: number; deaths: number; battles: number
+  }> = {}
+  
   for (const r of data) {
-    if (!map[r.player_name]) map[r.player_name] = { name: r.player_name, role: r.role, damage: 0, healing: 0, kills: 0, deaths: 0, battles: 0 }
+    if (!map[r.player_name]) map[r.player_name] = { name: r.player_name, roleCounts: {}, damage: 0, healing: 0, kills: 0, deaths: 0, battles: 0 }
     map[r.player_name].damage   += r.damage_done
     map[r.player_name].healing  += r.healing_done
     map[r.player_name].kills    += r.kills
     map[r.player_name].deaths   += r.deaths
     map[r.player_name].battles  += 1
+    
+    // Contabiliza a classe jogada
+    const roleKey = (r.role || 'dps').toLowerCase()
+    map[r.player_name].roleCounts[roleKey] = (map[r.player_name].roleCounts[roleKey] || 0) + 1
   }
-  return Object.values(map)
+  
+  return Object.values(map).map(p => {
+    // Organiza as classes da que mais jogou para a que menos jogou
+    const sortedRoles = Object.keys(p.roleCounts).sort((a, b) => p.roleCounts[b] - p.roleCounts[a])
+    return {
+      ...p,
+      roles: sortedRoles.slice(0, 2) // Pega as 2 maiores
+    }
+  })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -61,15 +96,20 @@ const roleCss = (r: string) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // PAGE
 // ─────────────────────────────────────────────────────────────────────────────
-export default async function DashboardPage() {
-  const [battles, players] = await Promise.all([getBattles(), getPlayerAgg()])
+export default async function DashboardPage(props: { searchParams?: { start?: string, end?: string } }) {
+  // Safe resolution for Next 14/15 
+  const searchParams = props.searchParams ? await Promise.resolve(props.searchParams) : {}
+  const start = searchParams.start || ''
+  const end = searchParams.end || ''
+
+  const [battles, players] = await Promise.all([getBattles(start, end), getPlayerAgg(start, end)])
 
   const wins      = battles.filter(b => b.result === 'WIN').length
   const winRate   = battles.length ? Math.round((wins / battles.length) * 100) : 0
   const totalFame = battles.reduce((s, b) => s + (b.total_fame ?? 0), 0)
-  const topDPS     = [...players].sort((a, b) => b.damage   - a.damage).slice(0, 5)
-  const topHeal    = [...players].sort((a, b) => b.healing  - a.healing).slice(0, 5)
-  const topKills   = [...players].sort((a, b) => b.kills    - a.kills).slice(0, 5)
+  const topDPS     = [...players].sort((a, b) => b.damage   - a.damage).slice(0, 25)
+  const topHeal    = [...players].sort((a, b) => b.healing  - a.healing).slice(0, 25)
+  const topKills   = [...players].sort((a, b) => b.kills    - a.kills).slice(0, 25)
 
   const winRateStroke = winRate >= 60 ? '#00ff9d' : winRate >= 40 ? '#ffcc00' : '#ff4d4d'
   const R = 38, CIRC = 2 * Math.PI * R
@@ -79,7 +119,31 @@ export default async function DashboardPage() {
 
   return (
     <>
-      {/* ── TOP KPI BAR ──────────────────────────────────── */}
+      {/* ── TOP KPI BAR & FILTERS ────────────────────────── */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12 }}>
+        <h1 className="section-hd" style={{ fontSize: 24, color: 'var(--text-900)' }}>DASHBOARD</h1>
+        
+        <form method="GET" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="glass" style={{ padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="label" style={{ fontSize: 10 }}>Start</span>
+            <input name="start" type="date" defaultValue={start} style={{ background: 'transparent', border: 'none', color: 'var(--text-900)', outline: 'none', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
+          </div>
+          <div className="glass" style={{ padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="label" style={{ fontSize: 10 }}>End</span>
+            <input name="end" type="date" defaultValue={end} style={{ background: 'transparent', border: 'none', color: 'var(--text-900)', outline: 'none', fontSize: 12, fontFamily: 'var(--font-mono)' }} />
+          </div>
+          <button type="submit" className="glass" style={{
+            padding: '6px 16px', background: 'rgba(0,255,157,0.1)', border: '1px solid var(--cyan-20)',
+            color: 'var(--cyan)', fontWeight: 600, fontSize: 12, borderRadius: 6, cursor: 'pointer'
+          }}>
+            Filtrar Global
+          </button>
+          {(start || end) && (
+            <a href="/" className="label" style={{ marginLeft: 6, fontSize: 11, textDecoration: 'none' }}>Limpar</a>
+          )}
+        </form>
+      </div>
+
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
@@ -146,19 +210,33 @@ export default async function DashboardPage() {
                 </thead>
                 <tbody>
                   {battles.map((b, i) => (
-                    <tr key={b.id} style={{ animationDelay: `${i * 20}ms` }}>
+                    <tr 
+                      key={b.id} 
+                      style={{ animationDelay: `${i * 20}ms` }}
+                    >
                       <td>
                         <span className={`badge badge-${b.result === 'WIN' ? 'win' : 'loss'}`}>
                           {b.result}
                         </span>
                       </td>
                       <td style={{ maxWidth: 220 }}>
-                        <div style={{
-                          fontSize: 12, fontWeight: 600, color: 'var(--text-900)',
-                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                        }}>
-                          vs {b.opponents}
-                        </div>
+                        <a 
+                          href={`https://albionbb.com/battles/${b.id}`} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          style={{
+                            fontSize: 12, fontWeight: 600, color: 'var(--text-900)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6
+                          }}
+                        >
+                          <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            vs {b.opponents}
+                          </span>
+                          <span className="material-symbols-outlined" style={{ fontSize: 13, color: 'var(--cyan)' }}>
+                            open_in_new
+                          </span>
+                        </a>
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: '#dc2626' }}>
@@ -250,7 +328,7 @@ export default async function DashboardPage() {
               </div>
               <span className="label">Dano Total</span>
             </div>
-            <div>
+            <div className="scroll" style={{ maxHeight: 220, overflowY: 'auto' }}>
               {topDPS.length === 0 ? (
                 <div style={{ padding: '16px', textAlign: 'center' }}>
                   <span className="label">Sem dados — desative o RLS no Supabase</span>
@@ -261,7 +339,7 @@ export default async function DashboardPage() {
                   padding: '10px 16px',
                   borderBottom: i < topDPS.length - 1 ? '1px solid rgba(203,213,225,0.12)' : 'none',
                 }}>
-                  <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{medals[i]}</span>
+                  <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{medals[i] || `${i + 1}º`}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
                       fontSize: 12, fontWeight: 700, color: 'var(--text-900)',
@@ -269,8 +347,10 @@ export default async function DashboardPage() {
                     }}>
                       {p.name}
                     </div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                      <span className={roleCss(p.role)} style={{ fontSize: 8 }}>{roleLabel(p.role)}</span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4, alignItems: 'center' }}>
+                      {p.roles.map(r => (
+                        <span key={r} className={roleCss(r)} style={{ fontSize: 8 }}>{roleLabel(r)}</span>
+                      ))}
                       <span className="label-sm">{p.battles}x</span>
                     </div>
                   </div>
@@ -294,7 +374,7 @@ export default async function DashboardPage() {
               </div>
               <span className="label">Cura Total</span>
             </div>
-            <div>
+            <div className="scroll" style={{ maxHeight: 220, overflowY: 'auto' }}>
               {topHeal.length === 0 ? (
                 <div style={{ padding: '16px', textAlign: 'center' }}>
                   <span className="label">Sem dados</span>
@@ -305,7 +385,7 @@ export default async function DashboardPage() {
                   padding: '10px 16px',
                   borderBottom: i < topHeal.length - 1 ? '1px solid rgba(203,213,225,0.12)' : 'none',
                 }}>
-                  <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{medals[i]}</span>
+                  <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{medals[i] || `${i + 1}º`}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
                       fontSize: 12, fontWeight: 700, color: 'var(--text-900)',
@@ -313,8 +393,10 @@ export default async function DashboardPage() {
                     }}>
                       {p.name}
                     </div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                      <span className={roleCss(p.role)} style={{ fontSize: 8 }}>{roleLabel(p.role)}</span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4, alignItems: 'center' }}>
+                      {p.roles.map(r => (
+                        <span key={r} className={roleCss(r)} style={{ fontSize: 8 }}>{roleLabel(r)}</span>
+                      ))}
                       <span className="label-sm">{p.battles}x</span>
                     </div>
                   </div>
@@ -338,7 +420,7 @@ export default async function DashboardPage() {
               </div>
               <span className="label">Kills Totais</span>
             </div>
-            <div>
+            <div className="scroll" style={{ maxHeight: 220, overflowY: 'auto' }}>
               {topKills.length === 0 ? (
                 <div style={{ padding: '16px', textAlign: 'center' }}>
                   <span className="label">Sem dados</span>
@@ -349,7 +431,7 @@ export default async function DashboardPage() {
                   padding: '10px 16px',
                   borderBottom: i < topKills.length - 1 ? '1px solid rgba(203,213,225,0.12)' : 'none',
                 }}>
-                  <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{medals[i]}</span>
+                  <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{medals[i] || `${i + 1}º`}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
                       fontSize: 12, fontWeight: 700, color: 'var(--text-900)',
@@ -357,8 +439,10 @@ export default async function DashboardPage() {
                     }}>
                       {p.name}
                     </div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                      <span className={roleCss(p.role)} style={{ fontSize: 8 }}>{roleLabel(p.role)}</span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4, alignItems: 'center' }}>
+                      {p.roles.map(r => (
+                        <span key={r} className={roleCss(r)} style={{ fontSize: 8 }}>{roleLabel(r)}</span>
+                      ))}
                       <span className="label-sm">{p.battles}x · {p.kills}K/{p.deaths}D</span>
                     </div>
                   </div>

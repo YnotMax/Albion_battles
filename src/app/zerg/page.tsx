@@ -12,15 +12,19 @@ export default function ZergHQPage() {
   const [loading, setLoading] = useState(true)
   const [roles, setRoles] = useState({ tank: 0, support: 0, healer: 0, melee: 0, range: 0 })
   const [total, setTotal] = useState(0)
+  const [localWinRate, setLocalWinRate] = useState(0)
 
   useEffect(() => {
     async function loadComp() {
-      // Puxa as ultimas 10 batalhas
-      const { data: bData } = await sb.from('battles').select('id').order('start_time', { ascending: false }).limit(5)
+      // Puxa as ultimas 5 batalhas
+      const { data: bData } = await sb.from('battles').select('id, result').order('start_time', { ascending: false }).limit(5)
       if (!bData || bData.length === 0) {
         setLoading(false)
         return
       }
+
+      const wins = bData.filter(b => b.result === 'WIN').length
+      setLocalWinRate(Math.round((wins / bData.length) * 100))
 
       const battleIds = bData.map(b => b.id)
       const { data: pData } = await sb.from('player_stats').select('role').in('battle_id', battleIds)
@@ -69,6 +73,36 @@ export default function ZergHQPage() {
   })
 
   const conicString = slices.map(s => `${s.color} ${s.start}% ${s.end}%`).join(', ')
+
+  // Tactical AI Logic
+  let advice = null;
+  if (total > 0) {
+    if (pHealer < 12) {
+      advice = { 
+        c: '#ef4444', 
+        i: 'warning', 
+        t: `ALERTA CRÍTICO: Detectamos colapso provável na Backlane. Com apenas ${pHealer.toFixed(1)}% de Curandeiros, sua taxa de vitória desabou/ficou em ${localWinRate}%. O algoritmo exige recrutamento de Healers até bater 15%+ para estancar a sangria de Mortes.` 
+      }
+    } else if (pTank < 15 && localWinRate < 50) {
+      advice = { 
+        c: '#f59e0b', 
+        i: 'front_hand', 
+        t: `ATENÇÃO ESTRATÉGICA: Linha de frente escassa (${pTank.toFixed(1)}% Tanks) impactando absorção de Dano. Isso justifica o Win Rate negativo de ${localWinRate}%. Considere forçar a rotação de DPS Melees para armas de Engage ou Heavy Maces.` 
+      }
+    } else if (localWinRate >= 60) {
+      advice = { 
+        c: '#10b981', 
+        i: 'verified_user', 
+        t: `ZERG SAUDÁVEL: Arquitetura tática de Classe A validada. A proporção atual de Engage vs Peel entregou um Win Rate excelente de ${localWinRate}%. O fluxo de dano e sustentação está otimizado. Mantenha The Meta!` 
+      }
+    } else {
+      advice = { 
+        c: 'var(--cyan)', 
+        i: 'analytics', 
+        t: `ANÁLISE ESTÁVEL: A composição revela uma mescla padrão, registrando Win Rate mediano de ${localWinRate}%. A balança Padrão indica que as vitórias (ou derrotas) baseiam-se mais em Item Power e Posicionamento do Caller do que deficiência grave de alguma classe.` 
+      }
+    }
+  }
 
   return (
     <>
@@ -121,6 +155,26 @@ export default function ZergHQPage() {
             </div>
 
           </div>
+
+          {/* AI ADVICE PANEL */}
+          {advice && (
+            <div style={{
+              margin: '0 24px 24px 24px', padding: 20,
+              background: `linear-gradient(90deg, rgba(15,23,42,0.8), ${advice.c}10)`,
+              borderLeft: `4px solid ${advice.c}`,
+              borderRadius: 6
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <span className="material-symbols-outlined" style={{ color: advice.c, fontSize: 18 }}>{advice.i}</span>
+                <span style={{ fontWeight: 800, fontSize: 12, letterSpacing: '0.05em', color: advice.c, textTransform: 'uppercase' }}>
+                  Inteligência Tática de Banco de Dados
+                </span>
+              </div>
+              <div style={{ color: 'var(--text-400)', fontSize: 13, lineHeight: 1.6 }}>
+                {advice.t}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* GEAR CHECKER (INSPECTOR) */}

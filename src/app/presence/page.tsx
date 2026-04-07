@@ -8,22 +8,24 @@ const sb = createClient(
 )
 
 async function getAttendanceData() {
-  // get total battles count
-  const { data: battles } = await sb.from('battles').select('id')
-  const totalBattles = battles?.length || 0
+  // get recent battles for sparkline
+  const { data: allBattles } = await sb.from('battles').select('id, start_time').order('start_time', { ascending: false })
+  const totalBattles = allBattles?.length || 0
+  const recentBattles = allBattles ? allBattles.slice(0, 10).reverse() : [] // Last 10 from oldest to newest
 
   // get player stats mapped
-  const { data: stats } = await sb.from('player_stats').select('player_name, role')
+  const { data: stats } = await sb.from('player_stats').select('player_name, role, battle_id')
   
   if (!stats) return { totalBattles: 0, players: [] }
 
-  const map: Record<string, { name: string, battles: number, roles: Record<string, number> }> = {}
+  const map: Record<string, { name: string, battles: number, roles: Record<string, number>, attendedIds: Set<string> }> = {}
   
   for (const s of stats) {
     if (!map[s.player_name]) {
-      map[s.player_name] = { name: s.player_name, battles: 0, roles: {} }
+      map[s.player_name] = { name: s.player_name, battles: 0, roles: {}, attendedIds: new Set() }
     }
     map[s.player_name].battles += 1
+    map[s.player_name].attendedIds.add(String(s.battle_id))
     const r = (s.role || 'dps').toLowerCase()
     map[s.player_name].roles[r] = (map[s.player_name].roles[r] || 0) + 1
   }
@@ -35,14 +37,19 @@ async function getAttendanceData() {
     
     const attendancePercent = totalBattles > 0 ? Math.round((p.battles / totalBattles) * 100) : 0
     
+    // Sparkline array for the last 10 battles
+    const sparkline = recentBattles.map(b => p.attendedIds.has(String(b.id)))
+
     return {
-      ...p,
+      name: p.name,
+      battles: p.battles,
       mainRoles,
-      attendancePercent
+      attendancePercent,
+      sparkline
     }
   }).sort((a, b) => b.battles - a.battles)
 
-  return { totalBattles, players }
+  return { totalBattles, recentBattles, players }
 }
 
 const roleCss = (r: string) => {
@@ -56,7 +63,7 @@ const roleLabel = (r: string) => {
 }
 
 export default async function PresencePage() {
-  const { totalBattles, players } = await getAttendanceData()
+  const { totalBattles, recentBattles, players } = await getAttendanceData()
 
   return (
     <>
@@ -94,7 +101,8 @@ export default async function PresencePage() {
                   <th>Operador</th>
                   <th>Classes Frequentes</th>
                   <th style={{ textAlign: 'center' }}>Presenças</th>
-                  <th style={{ width: 140 }}>Performance (Assiduidade)</th>
+                  <th style={{ textAlign: 'center', width: 140 }}>Atividade Recente</th>
+                  <th style={{ width: 140 }}>Performance (Geral)</th>
                 </tr>
               </thead>
               <tbody>
@@ -122,6 +130,21 @@ export default async function PresencePage() {
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 800 }}>
                           {p.battles} <span style={{ color: 'var(--text-500)', fontSize: 10 }}>/ {totalBattles}</span>
                         </span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                          {p.sparkline.map((attended, sid) => (
+                            <div 
+                              key={sid} 
+                              title={attended ? "Presente" : "Faltou"}
+                              style={{
+                                width: 8, height: 16, borderRadius: 2,
+                                backgroundColor: attended ? 'var(--cyan)' : 'rgba(255,255,255,0.05)',
+                                opacity: attended ? 1 : 0.6
+                              }} 
+                            />
+                          ))}
+                        </div>
                       </td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
